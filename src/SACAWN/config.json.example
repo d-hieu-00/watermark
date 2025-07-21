@@ -1,0 +1,33 @@
+{
+    "model": {
+        "embedded": {
+            "modelPath": "src/SACAWN/_result/models/embedded_model.h5"
+        },
+        "extractor": {
+            "modelPath": "src/SACAWN/_result/models/extractor_model.h5"
+        },
+        "tileSize": 512
+    },
+    "dataset": {
+        "train": {
+            "path": "./src/_data/train/**",
+            "batchSize": 32
+        },
+        "validation": {
+            "path": "./src/_data/validation/**",
+            "batchSize": 16
+        },
+        "watermark": {
+            "path": "./src/_data/watermarks.txt"
+        }
+    },
+    "training": {
+        "epochs": 50,
+        "optimizer": "adam",
+        "output": "./src/SACAWN/_result",
+        "logging": {
+            "level": "INFO",
+            "file": "training.log"
+        }
+    }
+}
