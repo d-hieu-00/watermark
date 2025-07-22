@@ -10,24 +10,34 @@
     },
     "dataset": {
         "train": {
-            "path": "./src/_data/train/**",
-            "batchSize": 32
+            "imageDir": "./src/_data/coco/train2017/",
+            "watermarkFile": "./src/_data/train-watermarks.txt",
+            "batchSize": 1
         },
         "validation": {
-            "path": "./src/_data/validation/**",
-            "batchSize": 16
-        },
-        "watermark": {
-            "path": "./src/_data/watermarks.txt"
+            "imageDir": "./src/_data/coco/val2017/",
+            "watermarkFile": "./src/_data/val-watermarks.txt",
+            "batchSize": 1
         }
     },
     "training": {
         "epochs": 50,
+        "watermarkMaxLength": 256,
+        "watermarkVocabSize": 128,
         "optimizer": "adam",
+        "learningRate": 1e-4,
         "output": "./src/SACAWN/_result",
+        "loss": {
+            "imperceptibilityWeight": 1.0,
+            "robustnessWeight": 2.0,
+            "extractionWeight": 1.5
+        },
         "logging": {
             "level": "INFO",
-            "file": "training.log"
+            "file": "logging.log"
         }
+    },
+    "environment": {
+        "TF_ENABLE_ONEDNN_OPTS": 0
     }
 }
