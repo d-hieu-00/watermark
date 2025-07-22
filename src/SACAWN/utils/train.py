@@ -12,38 +12,10 @@ from tqdm import tqdm # Progress bar for training loop
 # Internal
 import sys, pathlib; sys.path.append(str(pathlib.Path(__file__).parent.parent))
 from modules.loader import DataLoader
+from utils.config import Configuration
+from utils.load import loadImageTensor, loadStringTensor
 
 logger = logging.getLogger(__name__)
-
-
-def string_to_tensor(s: str, max_len=256, vocab_size=128):
-    """
-    Convert string s to a tf.Tensor of shape (256,) padded/truncated to length 256.
-    Characters are encoded as ASCII (or clipped to vocab_size).
-
-    Args:
-        s: string to encode
-        max_len: length to pad/truncate
-        vocab_size: clip values to this range
-
-    Returns:
-        tf.Tensor of shape (256,) and dtype int32
-    """
-    # Encode string to bytes → int list
-    ids = [ord(c) for c in s]
-
-    # Truncate
-    ids = ids[:max_len]
-
-    # Pad if too short
-    if len(ids) < max_len:
-        ids += [0] * (max_len - len(ids))
-
-    # Clip values to vocab size
-    ids = np.clip(ids, 0, vocab_size-1)
-
-    # Convert to tf.Tensor
-    return tf.constant(ids, dtype=tf.int32)
 
 class Trainer:
 
@@ -60,18 +32,60 @@ class Trainer:
     def ValidationLossesFilename():
         return "val_loss_history.csv"
 
-    def __init__(self, embedder: keras.Model, extractor: keras.Model, optimizer: Optimizer, trainLoader: DataLoader, valLoader: DataLoader, lossFn, outputDir):
-        self.embedder       = embedder
-        self.extractor      = extractor
-        self.optimizer      = optimizer
-        self.trainLoader    = trainLoader
-        self.valLoader      = valLoader
-        self.lossFn         = lossFn
-        self.outputDir      = outputDir
+    def __init__(self, config: Configuration):
+        self.config         = config
+        self.embedder       = None
+        self.extractor      = None
+        self.optimizer      = None
+        self.trainLoader    = None
+        self.valLoader      = None
+        self.lossFn         = None
+        self.outputDir      = self.config.outputPath
+        self.wmMaxLen       = self.config.watermarkMaxLength
+        self.wmVocabSize    = self.config.watermarkVocabSize
+        self.optimizerName  = self.config.optimizer
+        self.learningRate   = self.config.learningRate
+        self._setup()
 
         # Check if loss history files exist, if not create it
         self._checkLossHistoryFile(Trainer.TrainLossesFilename())
         self._checkLossHistoryFile(Trainer.ValidationLossesFilename())
+    
+    def _setup(self):
+        # Prepare loaders
+        self.trainLoader = DataLoader(
+            imageDir=self.config.trainDatasetImageDir,
+            watermarkFile=self.config.trainDatasetWatermarkFile,
+            batchSize=self.config.trainDatasetBatchSize
+        )
+        self.valLoader = DataLoader(
+            imageDir=self.config.validationDatasetImageDir,
+            watermarkFile=self.config.validationDatasetWatermarkFile,
+            batchSize=self.config.validationDatasetBatchSize
+        )
+        logger.info(f"Train Loader: {self.trainLoader.len()} samples, Batch Size: {self.trainLoader.batchSize}")
+        logger.info(f"Validation Loader: {self.valLoader.len()} samples, Batch Size: {self.valLoader.batchSize}")
+        logger.info(f"Watermark Max Length: {self.wmMaxLen}, Vocab Size: {self.wmVocabSize}")
+        logger.info(f"Output Directory: {self.outputDir}")
+
+        # Prepare models and optimizer, loss function
+        from modules.model import WatermarkEmbedderModel, WatermarkExtractorModel
+        from modules.lossfn import SACAWNLoss
+        from tensorflow.python.keras.optimizer_v2.adam import Adam
+
+        # Initialize models and loss function
+        self.embedder    = WatermarkEmbedderModel(self.wmMaxLen, self.wmVocabSize)
+        self.extractor   = WatermarkExtractorModel(self.wmMaxLen, self.wmVocabSize)
+        self.lossFn      = SACAWNLoss(self.config.lossImperceptibilityWeight, self.config.lossRobustnessWeight, self.config.lossExtractionWeight)
+        self.optimizer   = Adam(learning_rate=self.learningRate)
+        if isinstance(self.optimizerName, str) and self.optimizerName.lower() == "adam":
+            pass
+        else:
+            raise ValueError(f"Unsupported optimizer: {self.optimizerName}. Supported: 'adam'.")
+
+        logger.info(f"Models initialized: {self.embedder.name} and {self.extractor.name}")
+        logger.info(f"Optimizer: {self.optimizerName}, Learning Rate: {self.learningRate}")
+        logger.info(f"Loss Function: {self.lossFn.name}")
 
     def _checkLossHistoryFile(self, filename):
         """
@@ -99,17 +113,8 @@ class Trainer:
         textTensors = []
 
         for imgPath, text in batch:
-            # Load & decode image
-            imgRaw = tf.io.read_file(imgPath)
-            img = tf.image.decode_image(imgRaw, channels=3)
-            img = tf.image.convert_image_dtype(img, tf.float32)  # [0,1]
-
-            imgTensors.append(img)
-
-            # Convert text to tf.Tensor
-            textTensors.append(string_to_tensor(text))
-            # textTensors.append(tf.convert_to_tensor(text, dtype=tf.string))
-            # textTensors[-1] = tf.expand_dims(textTensors[-1], axis=0)
+            imgTensors.append(loadImageTensor(imgPath))  # Convert image to tf.Tensor
+            textTensors.append(loadStringTensor(text, self.wmMaxLen))  # Convert text to tf.Tensor
 
         # Stack into batch tensors
         imgBatch = tf.stack(imgTensors)       # (batch_size, H, W, 3)
@@ -131,7 +136,7 @@ class Trainer:
         Is a csv file with columns: timestamp,epoch,step,total_loss,imperceptibility_loss,robustness_loss,extraction_loss
         """
         with open(f"{self.outputDir}/{Trainer.TrainLossesFilename()}", 'a') as f:
-            line = f"{time.time()},{epoch},{step},{','.join([f'{loss:.4f}' for loss in losses])}\n"
+            line = f"{int(time.time())},{epoch},{step},{','.join([f'{loss:.4f}' for loss in losses])}\n"
             f.write(line)
 
     def saveValLosses(self, epoch, step, losses):
@@ -141,21 +146,21 @@ class Trainer:
         """
         with open(f"{self.outputDir}/{Trainer.ValidationLossesFilename()}", 'a') as f:
             # join the losses with commas
-            line = f"{time.time()},{epoch},{step},{','.join([f'{loss:.4f}' for loss in losses])}\n"
+            line = f"{int(time.time())},{epoch},{step},{','.join([f'{loss:.4f}' for loss in losses])}\n"
             f.write(line)
 
     @tf.function(reduce_retracing=True)
     def trainStep(self, imgs, wms):
         with tf.GradientTape() as tape:
             # Embed
-            watermarkedImgs = self.embedder(imgs, wms)
+            embImgs = self.embedder(imgs, wms)
             # Extract
-            wmPreds = self.extractor(watermarkedImgs)
+            wmPreds = self.extractor(embImgs)
             # Compute loss
-            totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, watermarkedImgs, wms, wmPreds)
+            totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, wmPreds)
 
-        grads = tape.gradient(totalLoss, self.embedder.trainable_variables + self.extractor.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.embedder.trainable_variables + self.extractor.trainable_variables))
+        grads = tape.gradient(totalLoss, self.embedder.variables() + self.extractor.variables())
+        self.optimizer.apply_gradients(zip(grads, self.embedder.variables() + self.extractor.variables()))
 
         return totalLoss, L_imp, L_rob, L_ext
 
@@ -173,7 +178,7 @@ class Trainer:
     def train(self, epochs=10):
         for epoch in tqdm(range(epochs), desc="Epoch"):
             # Training step
-            trainLoop = tqdm(range(self.trainLoader.totalBatches), desc="Train", leave=False)
+            trainLoop = tqdm(range(self.trainLoader.totalBatches), desc="+ Train", leave=False)
             losses = [[], [], [], []]
             for step in trainLoop:
                 (imgs, wms), done = self._prepareBatch(self.trainLoader)
@@ -193,7 +198,7 @@ class Trainer:
             self.saveModels()
 
             # Validation step
-            valLoop = tqdm(range(self.valLoader.totalBatches), desc="Validation", leave=False)
+            valLoop = tqdm(range(self.valLoader.totalBatches), desc="+ Validation", leave=False)
             losses = [[], [], [], []]
             for step in valLoop:
                 (imgs, wms), done = self._prepareBatch(self.valLoader)

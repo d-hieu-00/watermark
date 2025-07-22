@@ -60,52 +60,62 @@ class WatermarkEmbedderModel(BaseModel):
 
         self.model = self.buildModel((None, None, 3), (self.wmMaxLen))
 
-    def buildModel(self, xShape, wmShape):
-        x_in = layers.Input(shape=xShape)  # Dynamic input shape
-        wm_in = layers.Input(shape=wmShape)
-        x, watermark = x_in, wm_in
+    def buildModel(self, imgShape, wmShape):
+        img_in  = layers.Input(shape=imgShape) # (B, H, W, 3)
+        wm_in   = layers.Input(shape=wmShape) # (B, L)
+        img, wm = img_in, wm_in
 
         # 1. Encode watermark into embedding
-        wmEmbed = self.watermarkDense(tf.one_hot(tf.cast(watermark, tf.int32), depth=self.wmVocabSize))  # (B, wmMaxLen, 1024)
-        wmEmbed = tf.reduce_mean(wmEmbed, axis=1)                                   # (B, 1024)
+        wm = tf.cast(wm, dtype=tf.int32)
+        wmEmbed = self.watermarkDense(tf.one_hot(wm, depth=self.wmVocabSize))  # (B, L, 1024)
+        wmEmbed = tf.reduce_mean(wmEmbed, axis=1)                              # (B, 1024)
 
         # 2. Encoder
-        h = x
+        ex = img
         skips = []
         for filters in self.encoderFilters:
-            h = BaseModel.EncoderBlock(h, filters)
-            skips.append(h)
+            ex = BaseModel.EncoderBlock(ex, filters)
+            skips.append(ex)
 
         # 3. Bottleneck + attention + strength
-        h  = BaseModel.ResBlock(h, self.bottleneckFilters)
-        sa = BaseModel.SpatialAttentionBlock(h)
-        cs = BaseModel.ContentAdaptiveStrengthBlock(h)
+        ex = BaseModel.ResBlock(ex, self.bottleneckFilters)
+        sa = BaseModel.SpatialAttentionBlock(ex)
+        cs = BaseModel.ContentAdaptiveStrengthBlock(ex)
 
         # 4. Adjust latent + embed watermark
-        h = h * (sa + 0.1) * (cs + 0.1)  # Adjust strength according to content
+        ex = ex * (sa + 0.1) * (cs + 0.1)  # Adjust strength according to content
         wmMap = tf.reshape(wmEmbed, [-1, 1, 1, self.bottleneckFilters]) # (B, 1, 1, 1024)
-        wmMap = tf.tile(wmMap, [1, tf.shape(h)[1], tf.shape(h)[2], 1]) # Broadcast watermark map
-        h += wmMap
+        wmMap = tf.tile(wmMap, [1, tf.shape(ex)[1], tf.shape(ex)[2], 1]) # Broadcast watermark map
+        ex += wmMap
 
         # 5. Decoder
         for filters in self.decoderFilters:
-            h = BaseModel.DecoderBlock(h, skips.pop(), filters)
+            ex = BaseModel.DecoderBlock(ex, skips.pop(), filters)
 
         # 6. Final output
-        out = self.finalConv(h) # (B,H',W',3), pixel ∈ [0,1]
-        out = tf.image.resize(out, size=tf.shape(x)[1:3], method='bilinear') # Resize output to match input size
+        out = self.finalConv(ex) # (B,H',W',3), pixel ∈ [0,1]
+        out = tf.image.resize(out, size=tf.shape(img_in)[1:3]) # Resize output to match input size
 
-        return keras.Model(inputs=[x_in, wm_in], outputs=out, name='WatermarkEmbedderModel')
+        return keras.Model(inputs=[img_in, wm_in], outputs=out, name='WatermarkEmbedderModel')
 
-    def call(self, x, watermark):
+    def variables(self):
+        """
+        Get the variables of the model.
+        """
+        return self.model.trainable_variables \
+            + self.trainable_variables \
+            + self.watermarkDense.trainable_variables \
+            + self.finalConv.trainable_variables
+
+    def call(self, image, watermark):
         """
         Args:
-            x: (B, H, W, 3) — ảnh gốc, đã chuẩn hóa [0,1].
-            watermark: (B, wmMaxLen) — chuỗi watermark, mỗi phần tử ∈ [0, wmVocabSize-1]
+            image: (B, H, W, 3) — raw image, pixel ∈ [0,1]
+            watermark: (B, L, 1) — watermark text, L is the length of the watermark.
         Returns:
-            out: (B, H, W, 3) — ảnh đã nhúng watermark.
+            out: (B, H, W, 3) — image with embedded watermark.
         """
-        return self.model([x, watermark])
+        return self.model([image, watermark])
 
 class WatermarkExtractorModel(BaseModel):
     def __init__(self, *args, **kwargs):
@@ -115,37 +125,47 @@ class WatermarkExtractorModel(BaseModel):
         self.bottleneckFilters  = 1024
         # Head
         self.pool   = layers.GlobalAveragePooling2D()
-        self.dense  = layers.Dense(self.wmMaxLen * self.wmVocabSize)
+        self.dense  = keras.Sequential([
+            layers.Dense(self.wmMaxLen * self.wmVocabSize),
+            layers.Activation('relu'),
+            layers.Dense(self.wmMaxLen),
+        ])
 
         self.model = self.buildModel((None, None, 3))
 
-    def buildModel(self, xShape):
-        x_in = layers.Input(shape=xShape)
+    def buildModel(self, imgShape):
+        img_in = layers.Input(shape=imgShape)
 
-        h = x_in
+        ex = img_in
         for filters in self.encoderFilters:
-            h = BaseModel.EncoderBlock(h, filters)
+            ex = BaseModel.EncoderBlock(ex, filters)
 
         # Bottleneck + Apply attention mechanisms (to focus on regions where watermark is strong)
-        h  = BaseModel.ResBlock(h, self.bottleneckFilters)
-        sa = BaseModel.SpatialAttentionBlock(h)    # (B,H',W',1)
-        cs = BaseModel.ContentAdaptiveStrengthBlock(h)     # (B,H',W',1)
-        h  = h * (sa + 0.1) * (cs + 0.1)
+        ex = BaseModel.ResBlock(ex, self.bottleneckFilters)
+        sa = BaseModel.SpatialAttentionBlock(ex)            # (B,H',W',1)
+        cs = BaseModel.ContentAdaptiveStrengthBlock(ex)     # (B,H',W',1)
+        ex = ex * (sa + 0.1) * (cs + 0.1)
 
         # Global pooling and dense layer to predict watermark
-        h = self.pool(h)  # (B,1024)
-        h = self.dense(h)  # (B, wmMaxLen * wmVocabSize)
-        h = tf.reshape(h, [-1, self.wmMaxLen]) # (B, wmMaxLen)
+        ex  = self.pool(ex)   # (B, 1024)
+        out = self.dense(ex)  # (B, wmMaxLen)
 
-        # Get outputs
-        out = tf.nn.softmax(h, axis=-1) # (B, wmMaxLen)
-        return keras.Model(inputs=[x_in], outputs=out, name='WatermarkExtractorModel')
+        return keras.Model(inputs=[img_in], outputs=out, name='WatermarkExtractorModel')
 
-    def call(self, x):
+    def variables(self):
+        """
+        Get the variables of the model.
+        """
+        return self.model.trainable_variables \
+            + self.trainable_variables \
+            + self.pool.trainable_variables \
+            + self.dense.trainable_variables
+
+    def call(self, img):
         """
         Args:
-            x: (B, H, W, 3) — watermarked image
+            img: (B, H, W, 3) — watermarked image
         Returns:
-            w_hat: (B, wmMaxLen, wmVocabSize) — predicted one-hot probabilities
+            out: (B, wmMaxLen) — predicted one-hot probabilities
         """
-        return self.model([x])
+        return self.model([img]) # (B, wmMaxLen)
