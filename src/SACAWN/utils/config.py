@@ -5,8 +5,9 @@ import time
 
 class Configuration:
     _logger = logging.getLogger(__name__)
-    def __init__(self, configFile="config.json"):
+    def __init__(self, configFile="config.json", setupLogging=True):
         self._timestamp = time.strftime("%Y%m%d-%H%M%S")
+        self._setupLogging = setupLogging
         # Load json configuration file to memory
         try:
             with open(configFile, "r") as f:
@@ -26,9 +27,10 @@ class Configuration:
                 print(f"✅ Created output directory: {self.outputPath}")
 
         # Set logging level based on configuration
-        logging.basicConfig(filename=self.loggingFile, level=self.loggingLevel.upper(),
-                            format='%(asctime)s - %(levelname)s - %(message)s')
-        print(f"✅ Logging initialized with level: {self.loggingLevel} and file: {self.loggingFile}")
+        if self._setupLogging:
+            logging.basicConfig(filename=self.loggingFile, level=self.loggingLevel.upper(),
+                                format='%(asctime)s - %(levelname)s - %(message)s')
+            print(f"✅ Logging initialized with level: {self.loggingLevel} and file: {self.loggingFile}")
 
         # Set the runtime environment
         envs = self.get("environment", default={})
@@ -185,11 +187,22 @@ class Configuration:
         """
         Get the logging level for training.
         """
-        return self.get("training", "logging", "level")
+        return self.get("training", "logging", "logLevel")
 
     @property
     def loggingFile(self):
         """
         Get the logging file name for training.
         """
-        return f"{self.outputPath}/{self.get("training", "logging", "file")}"
+        if not self._setupLogging:
+            return None
+        return f"{self.outputPath}/{self.get("training", "logging", "logFile")}"
+
+    @property
+    def stdErrLogFile(self):
+        """
+        Get the standard error logging file name for training.
+        """
+        if not self._setupLogging:
+            return None
+        return f"{self.outputPath}/{self.get("training", "logging", "stdErrLogFile")}"

@@ -25,26 +25,6 @@ class BaseModel(keras.Model):
             layers.Activation('relu'),
         ])
 
-    # @staticmethod
-    # def EncoderBlock(filters):
-    #     return keras.Sequential([
-    #         layers.Conv2D(filters, 3, padding='same'),
-    #         layers.Activation('relu'),
-    #         layers.Conv2D(filters, 3, padding='same'),
-    #         layers.Activation('relu'),
-    #     ])
-    #     x = BaseModel.ResBlock(filters)
-    #     x = layers.MaxPooling2D(pool_size=(2, 2), strides=2)(x)
-    #     return x
-
-    # @staticmethod
-    # def DecoderBlock(inputs, skip, filters):
-    #     x = layers.Conv2DTranspose(filters, (2, 2), strides=2, padding='same')(inputs)
-    #     s = tf.image.resize(skip, tf.shape(x)[1:3]) # Resize skip connection
-    #     x = layers.Concatenate()([x, s])
-    #     x = BaseModel.ResBlock(x, filters)
-    #     return x
-
     @staticmethod
     def SpatialAttentionBlock():
         return keras.Sequential([
@@ -75,40 +55,45 @@ class WatermarkEmbedderModel(BaseModel):
         self.spatialAttention           = BaseModel.SpatialAttentionBlock()
         self.contentAdaptiveStrength    = BaseModel.ContentAdaptiveStrengthBlock()
 
-        self.decoderUp1     = layers.UpSampling2D(size=(2, 2))
+        self.decoderUp1     = layers.Conv2DTranspose(512, (2, 2), strides=2, padding='same')
         self.decoder1       = BaseModel.ResBlock(512)
-        self.decoderUp2     = layers.UpSampling2D(size=(2, 2))
+        self.decoderUp2     = layers.Conv2DTranspose(256, (2, 2), strides=2, padding='same')
         self.decoder2       = BaseModel.ResBlock(256)
-        self.decoderUp3     = layers.UpSampling2D(size=(2, 2))
+        self.decoderUp3     = layers.Conv2DTranspose(128, (2, 2), strides=2, padding='same')
         self.decoder3       = BaseModel.ResBlock(128)
-        self.decoderUp4     = layers.UpSampling2D(size=(2, 2))
+        self.decoderUp4     = layers.Conv2DTranspose(64, (2, 2), strides=2, padding='same')
         self.decoder4       = BaseModel.ResBlock(64)
 
         self.finalConv           = keras.Sequential([ layers.Conv2D(3, 3, padding='same', activation='sigmoid') ])
         self.watermarkDense      = layers.Dense(self.bottleneckFilters, activation='relu')
 
-        self.model = self.buildModel((None, None, 3), (self.wmMaxLen))
+    def call(self, xInput): # ((B, H, W, 3), (B, L))
+        """
+        Args:
+            xInput: tuple of (image, watermark)
+            image: (B, H, W, 3) — raw image, pixel ∈ [0,1]
+            watermark: (B, L) — watermark text, L is the length of the watermark.
+        Returns:
+            out: (B, H, W, 3) — image with embedded watermark.
+        """
 
-    def buildModel(self, imgShape, wmShape):
-        img_in  = layers.Input(shape=imgShape) # (B, H, W, 3)
-        wm_in   = layers.Input(shape=wmShape) # (B, L)
-        img, wm = img_in, wm_in
+        image, watermark = xInput  # Unpack input tuple
 
         # 1. Encode watermark into embedding
-        wm = tf.cast(wm, dtype=tf.int32)
+        wm = tf.cast(watermark, dtype=tf.int32)
         wmEmbed = self.watermarkDense(tf.one_hot(wm, depth=self.wmVocabSize))  # (B, L, 1024)
         wmEmbed = tf.reduce_mean(wmEmbed, axis=1)                              # (B, 1024)
 
         # 2. Encoder
-        ex = img
-        skips = []
-        ex = self.encoder1(ex); skips.append(ex)    # (B, H/2, W/2, 64)
+        ex = image
+        drops = []
+        ex = self.encoder1(ex); drops.append(layers.Dropout(0.5)(ex))    # (B, H/2, W/2, 64)
         ex = self.encoderDown1(ex)                  # (B, H/4, W/4, 64)
-        ex = self.encoder2(ex); skips.append(ex)    # (B, H/4, W/4, 128)
+        ex = self.encoder2(ex); drops.append(layers.Dropout(0.5)(ex))    # (B, H/4, W/4, 128)
         ex = self.encoderDown2(ex)                  # (B, H/8, W/8, 128)
-        ex = self.encoder3(ex); skips.append(ex)    # (B, H/8, W/8, 256)
+        ex = self.encoder3(ex); drops.append(layers.Dropout(0.5)(ex))    # (B, H/8, W/8, 256)
         ex = self.encoderDown3(ex)                  # (B, H/16, W/16, 256)
-        ex = self.encoder4(ex); skips.append(ex)    # (B, H/16, W/16, 512)
+        ex = self.encoder4(ex); drops.append(layers.Dropout(0.5)(ex))    # (B, H/16, W/16, 512)
         ex = self.encoderDown4(ex)                  # (B, H/32, W/32, 512)
 
         # 3. Bottleneck + attention + strength
@@ -124,50 +109,30 @@ class WatermarkEmbedderModel(BaseModel):
 
         # 5. Decoder
         ex = self.decoderUp1(ex) # (B, H/16, W/16, 1024)
-        sk = tf.image.resize(skips[3], tf.shape(ex)[1:3]) # Resize skip connection
-        ex = layers.Concatenate()([ex, sk]) # Skip connection from encoder4
+        dr = tf.image.resize(drops[3], tf.shape(ex)[1:3]) # Resize drop features
+        ex = layers.Concatenate()([dr, ex]) # Merge with drop features
         ex = self.decoder1(ex) # (B, H/16, W/16, 512)
 
         ex = self.decoderUp2(ex) # (B, H/8, W/8, 512)
-        ex = layers.Concatenate()([ex, skips[3]]) # Skip connection from encoder4
-        sk = tf.image.resize(skips[2], tf.shape(ex)[1:3]) # Resize skip connection
-        ex = layers.Concatenate()([ex, sk]) # Skip connection from encoder4
+        dr = tf.image.resize(drops[2], tf.shape(ex)[1:3]) # Resize drop features
+        ex = layers.Concatenate()([dr, ex]) # Merge with drop features
         ex = self.decoder2(ex) # (B, H/8, W/8, 256)
 
         ex = self.decoderUp3(ex) # (B, H/4, W/4, 256)
-        sk = tf.image.resize(skips[1], tf.shape(ex)[1:3]) # Resize skip connection
-        ex = layers.Concatenate()([ex, sk]) # Skip connection from encoder3
+        dr = tf.image.resize(drops[1], tf.shape(ex)[1:3]) # Resize drop features
+        ex = layers.Concatenate()([dr, ex]) # Merge with drop features
         ex = self.decoder3(ex) # (B, H/4, W/4, 128)
 
         ex = self.decoderUp4(ex) # (B, H/2, W/2, 128)
-        sk = tf.image.resize(skips[0], tf.shape(ex)[1:3]) # Resize skip connection
-        ex = layers.Concatenate()([ex, sk]) # Skip connection from encoder2
+        dr = tf.image.resize(drops[0], tf.shape(ex)[1:3]) # Resize drop features
+        ex = layers.Concatenate()([dr, ex]) # Merge with drop features
         ex = self.decoder4(ex) # (B, H/2, W/2, 64)
 
         # 6. Final output
-        out = self.finalConv(ex) # (B,H',W',3), pixel ∈ [0,1]
-        out = tf.image.resize(out, size=tf.shape(img_in)[1:3]) # Resize output to match input size
+        out = self.finalConv(ex) # (B, H',W',3), pixel ∈ [0,1]
+        out = tf.image.resize(out, size=tf.shape(image)[1:3]) # Resize output to match input size
 
-        return keras.Model(inputs=[img_in, wm_in], outputs=out, name='WatermarkEmbedderModel')
-
-    def variables(self):
-        """
-        Get the variables of the model.
-        """
-        return self.trainable_variables
-            # + self.model.trainable_variables \
-            # + self.watermarkDense.trainable_variables \
-            # + self.finalConv.trainable_variables
-
-    def call(self, image, watermark):
-        """
-        Args:
-            image: (B, H, W, 3) — raw image, pixel ∈ [0,1]
-            watermark: (B, L, 1) — watermark text, L is the length of the watermark.
-        Returns:
-            out: (B, H, W, 3) — image with embedded watermark.
-        """
-        return self.model([image, watermark])
+        return out  # (B, H, W, 3) — watermarked image
 
 class WatermarkExtractorModel(BaseModel):
     def __init__(self, *args, **kwargs):
@@ -195,13 +160,16 @@ class WatermarkExtractorModel(BaseModel):
             layers.Dense(self.wmMaxLen),
         ])
 
-        self.model = self.buildModel((None, None, 3))
-
-    def buildModel(self, imgShape):
-        img_in = layers.Input(shape=imgShape)
-
+    def call(self, img):
+        """
+        Args:
+            img: (B, H, W, 3) — watermarked image
+        Returns:
+            out: (B, wmMaxLen) — predicted one-hot probabilities
+        """
+        
         # 1. Encoder
-        ex = img_in
+        ex = img
         ex = self.encoder1(ex);     # (B, H/2, W/2, 64)
         ex = self.encoderDown1(ex)  # (B, H/4, W/4, 64)
         ex = self.encoder2(ex);     # (B, H/4, W/4, 128)
@@ -223,19 +191,4 @@ class WatermarkExtractorModel(BaseModel):
         ex  = self.pool(ex)   # (B, 1024)
         out = self.dense(ex)  # (B, wmMaxLen)
 
-        return keras.Model(inputs=[img_in], outputs=out, name='WatermarkExtractorModel')
-
-    def variables(self):
-        """
-        Get the variables of the model.
-        """
-        return self.model.trainable_variables
-
-    def call(self, img):
-        """
-        Args:
-            img: (B, H, W, 3) — watermarked image
-        Returns:
-            out: (B, wmMaxLen) — predicted one-hot probabilities
-        """
-        return self.model([img]) # (B, wmMaxLen)
+        return out  # (B, wmMaxLen) — predicted watermark

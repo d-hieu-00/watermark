@@ -1,4 +1,3 @@
-from email.mime import text
 import tensorflow as tf
 
 def loadImageTensor(path: str) -> tf.Tensor: # (H, W, 3)

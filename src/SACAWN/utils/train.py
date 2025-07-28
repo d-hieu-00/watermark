@@ -1,5 +1,6 @@
 
 # External
+import sys
 import time
 import logging
 import numpy as np
@@ -18,7 +19,6 @@ from utils.load import loadImageTensor, loadStringTensor
 logger = logging.getLogger(__name__)
 
 class Trainer:
-
     @staticmethod
     def LossesHeaders():
         tf.random.uniform((1,))  # Ensure TensorFlow is initialized
@@ -50,7 +50,7 @@ class Trainer:
         # Check if loss history files exist, if not create it
         self._checkLossHistoryFile(Trainer.TrainLossesFilename())
         self._checkLossHistoryFile(Trainer.ValidationLossesFilename())
-    
+
     def _setup(self):
         # Prepare loaders
         self.trainLoader = DataLoader(
@@ -122,13 +122,15 @@ class Trainer:
 
         return (imgBatch, textBatch), reachedEnd
 
-    def saveModels(self):
+    def saveModels(self, printFn):
         """
         Save the embedder and extractor models to the output directory.
         """
-        self.embedder.save(f"{self.outputDir}/embedder.h5")
-        self.extractor.save(f"{self.outputDir}/extractor.h5")
-        print(f"Models saved to {self.outputDir}")
+        self.embedder.save(f"{self.outputDir}/embedder.tf", save_format='tf')
+        self.extractor.save(f"{self.outputDir}/extractor.tf", save_format='tf')
+        if printFn:
+            printFn(f"Embedder model saved to {self.outputDir}/embedder.tf")
+            printFn(f"Extractor model saved to {self.outputDir}/extractor.tf")
 
     def saveTrainLosses(self, epoch, step, losses):
         """
@@ -153,21 +155,21 @@ class Trainer:
     def trainStep(self, imgs, wms):
         with tf.GradientTape() as tape:
             # Embed
-            embImgs = self.embedder(imgs, wms)
+            embImgs = self.embedder((imgs, wms))
             # Extract
             wmPreds = self.extractor(embImgs)
             # Compute loss
             totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, wmPreds)
 
-        grads = tape.gradient(totalLoss, self.embedder.variables() + self.extractor.variables())
-        self.optimizer.apply_gradients(zip(grads, self.embedder.variables() + self.extractor.variables()))
+        grads = tape.gradient(totalLoss, self.embedder.trainable_variables + self.extractor.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.embedder.trainable_variables + self.extractor.trainable_variables))
 
         return totalLoss, L_imp, L_rob, L_ext
 
     @tf.function(reduce_retracing=True)
     def valStep(self, imgs, wms):
         # Embed
-        watermarkedImgs = self.embedder(imgs, wms)
+        watermarkedImgs = self.embedder((imgs, wms))
         # Extract
         wmPreds = self.extractor(watermarkedImgs)
         # Compute loss
@@ -176,9 +178,9 @@ class Trainer:
         return totalLoss, L_imp, L_rob, L_ext
 
     def train(self, epochs=10):
-        for epoch in tqdm(range(epochs), desc="Epoch"):
+        for epoch in tqdm(range(epochs), file=sys.stdout, desc="Epoch"):
             # Training step
-            trainLoop = tqdm(range(self.trainLoader.totalBatches), desc="+ Train", leave=False)
+            trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train", leave=False)
             losses = [[], [], [], []]
             for step in trainLoop:
                 (imgs, wms), done = self._prepareBatch(self.trainLoader)
@@ -195,10 +197,10 @@ class Trainer:
             tqdm.write(f"Training results for epoch {epoch}:")
             tqdm.write(f"Total loss: {np.mean(losses[0]):.4f}, L_imp: {np.mean(losses[1]):.4f}, L_rob: {np.mean(losses[2]):.4f}, L_ext: {np.mean(losses[3]):.4f}")
             logger.info(f"Epoch {epoch} completed. Total loss: {np.mean(losses[0]):.4f}, L_imp: {np.mean(losses[1]):.4f}, L_rob: {np.mean(losses[2]):.4f}, L_ext: {np.mean(losses[3]):.4f}")
-            self.saveModels()
+            self.saveModels(printFn=tqdm.write)
 
             # Validation step
-            valLoop = tqdm(range(self.valLoader.totalBatches), desc="+ Validation", leave=False)
+            valLoop = tqdm(range(self.valLoader.totalBatches), file=sys.stdout, desc="+ Validation", leave=False)
             losses = [[], [], [], []]
             for step in valLoop:
                 (imgs, wms), done = self._prepareBatch(self.valLoader)

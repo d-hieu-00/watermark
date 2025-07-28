@@ -16,6 +16,9 @@ if __name__ == "__main__":
     logger.info(f"Configuration loaded: {config._configFile}")
     logger.info(f"Training Epochs: {config.trainingEpochs}")
 
+    stdErrLogFile = open(config.stdErrLogFile, 'w')
+    import os; os.dup2(stdErrLogFile.fileno(), 2)  # Redirect stderr to stdErrLogFile for logging
+
     from utils.train import Trainer
     trainer = Trainer(config)
     trainer.train(epochs=config.trainingEpochs)
