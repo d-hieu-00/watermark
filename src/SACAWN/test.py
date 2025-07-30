@@ -33,11 +33,11 @@ def run(imageFile, watermarkText, embedder, extractor):
     return imgWm, extractWm, wmTensor
 
 # Load models
-embedder = keras.models.load_model("/mnt/d/__doc/repos/watermark/src/SACAWN/_result/20250730-143326/embedder.h5", compile=False)
-extractor = keras.models.load_model("/mnt/d/__doc/repos/watermark/src/SACAWN/_result/20250730-143326/extractor.h5", compile=False)
+embedder = keras.models.load_model("./src/SACAWN/_result/20250730-160702/embedder.h5", compile=False)
+extractor = keras.models.load_model("./src/SACAWN/_result/20250730-160702/extractor.h5", compile=False)
 
 # Example usage
-(imgWm, extractWm, embeddedWm) = run("/mnt/d/__doc/repos/watermark/src/SACAWN/test.jpg", "Sample Watermark", embedder, extractor)
+(imgWm, extractWm, embeddedWm) = run("./src/SACAWN/test.jpg", "Sample Watermark", embedder, extractor)
 
 # Save watermarked image
 saveImage(imgWm[0], "watermarked_output.png")

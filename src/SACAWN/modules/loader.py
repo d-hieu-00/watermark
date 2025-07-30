@@ -1,6 +1,5 @@
 import os
 import math
-import tensorflow as tf
 
 class BaseLoader:
     def __init__(self, batchSize=1):

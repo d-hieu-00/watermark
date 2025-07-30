@@ -194,10 +194,6 @@ class Trainer:
                 losses[3].append(L_ext.numpy())
                 if done: break  # If we reached the end of the dataset, stop training
 
-                if step % 2000 == 0 and step != 0:
-                    tqdm.write(f"Saving models for each 2000 steps (step={step})...")
-                    self.saveModels(printFn=tqdm.write)
-
             tqdm.write(f"Saving models for epoch {epoch}...")
             tqdm.write(f"Training results for epoch {epoch}:")
             tqdm.write(f"Total loss: {np.mean(losses[0]):.4f}, L_imp: {np.mean(losses[1]):.4f}, L_rob: {np.mean(losses[2]):.4f}, L_ext: {np.mean(losses[3]):.4f}")
