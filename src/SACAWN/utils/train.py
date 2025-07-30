@@ -43,6 +43,7 @@ class Trainer:
         self.outputDir      = self.config.outputPath
         self.wmMaxLen       = self.config.watermarkMaxLength
         self.wmVocabSize    = self.config.watermarkVocabSize
+        self.imageTrainSize = config.imageTrainSize
         self.optimizerName  = self.config.optimizer
         self.learningRate   = self.config.learningRate
         self._setup()
@@ -74,8 +75,8 @@ class Trainer:
         from tensorflow.python.keras.optimizer_v2.adam import Adam
 
         # Initialize models and loss function
-        self.embedder    = WatermarkEmbedderModel(self.wmMaxLen, self.wmVocabSize)
-        self.extractor   = WatermarkExtractorModel(self.wmMaxLen, self.wmVocabSize)
+        self.embedder    = WatermarkEmbedderModel(self.wmMaxLen, self.wmVocabSize).build()
+        self.extractor   = WatermarkExtractorModel(self.wmMaxLen, self.wmVocabSize).build()
         self.lossFn      = SACAWNLoss(self.config.lossImperceptibilityWeight, self.config.lossRobustnessWeight, self.config.lossExtractionWeight)
         self.optimizer   = Adam(learning_rate=self.learningRate)
         if isinstance(self.optimizerName, str) and self.optimizerName.lower() == "adam":
@@ -113,7 +114,7 @@ class Trainer:
         textTensors = []
 
         for imgPath, text in batch:
-            imgTensors.append(loadImageTensor(imgPath))  # Convert image to tf.Tensor
+            imgTensors.append(loadImageTensor(imgPath, self.imageTrainSize))  # Convert image to tf.Tensor
             textTensors.append(loadStringTensor(text, self.wmMaxLen))  # Convert text to tf.Tensor
 
         # Stack into batch tensors
@@ -126,11 +127,11 @@ class Trainer:
         """
         Save the embedder and extractor models to the output directory.
         """
-        self.embedder.save(f"{self.outputDir}/embedder.tf", save_format='tf')
-        self.extractor.save(f"{self.outputDir}/extractor.tf", save_format='tf')
+        self.embedder.save(f"{self.outputDir}/embedder.h5", save_format='h5')
+        self.extractor.save(f"{self.outputDir}/extractor.h5", save_format='h5')
         if printFn:
-            printFn(f"Embedder model saved to {self.outputDir}/embedder.tf")
-            printFn(f"Extractor model saved to {self.outputDir}/extractor.tf")
+            printFn(f"Embedder model saved to {self.outputDir}/embedder.h5")
+            printFn(f"Extractor model saved to {self.outputDir}/extractor.h5")
 
     def saveTrainLosses(self, epoch, step, losses):
         """
@@ -192,6 +193,10 @@ class Trainer:
                 losses[2].append(L_rob.numpy())
                 losses[3].append(L_ext.numpy())
                 if done: break  # If we reached the end of the dataset, stop training
+
+                if step % 2000 == 0 and step != 0:
+                    tqdm.write(f"Saving models for each 2000 steps (step={step})...")
+                    self.saveModels(printFn=tqdm.write)
 
             tqdm.write(f"Saving models for epoch {epoch}...")
             tqdm.write(f"Training results for epoch {epoch}:")

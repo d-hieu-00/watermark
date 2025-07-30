@@ -1,5 +1,6 @@
 import os
 import math
+import tensorflow as tf
 
 class BaseLoader:
     def __init__(self, batchSize=1):
@@ -11,6 +12,8 @@ class BaseLoader:
 
     @batchSize.setter
     def batchSize(self, value):
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError("Batch size must be a positive integer.")
         self.__batchSize = value
 
     @property
@@ -18,7 +21,10 @@ class BaseLoader:
         """
         Calculate the total number of batches based on the batch size.
         """
-        return math.ceil(self.len() / self.__batchSize)
+        data_len = self.len()
+        if data_len == 0:
+            return 0
+        return math.ceil(data_len / self.__batchSize)
 
     def len(self):
         """
@@ -34,7 +40,11 @@ class BaseLoader:
     
     def nextBatch(self):
         """
-        Get the next batch of items. Should be implemented in subclasses.
+        Get the next batch of items.
+        Returns:
+            tuple: (batch_data, reached_end_of_epoch)
+                   batch_data will be a list of items, or a tuple of tf.Tensors if processed.
+                   reached_end_of_epoch is a boolean indicating if the loader reset.
         """
         batch = []
         reachedEnd = False
@@ -42,7 +52,7 @@ class BaseLoader:
             item = self.next()
             if item is None:
                 reachedEnd = True
-                break
+                break # Stop collecting if we hit the end of an epoch
             batch.append(item)
         return batch, reachedEnd
 
@@ -57,21 +67,18 @@ class WatermarkLoader(BaseLoader):
         with open(watermarkFile, 'r', encoding='latin1') as f:
             for line in f:
                 wm = line.strip()
-                if len(wm) < 256:
-                    wm += ' ' * (256 - len(wm))  # Pad to 256 characters
                 self.__watermarks.append(wm)
 
     # Length of the watermarks
     def len(self):
         return len(self.__watermarks)
 
-    # Get the next watermark
+    # Get the next watermark string
     def next(self):
         if self.__idx >= self.len():
-            # Reset the index if we reach the end
+            # Reset the index if we reach the end of the watermarks list
             self.__idx = 0
-            return None
-        # Get the watermark at the current index
+            return None # Signal end of watermark cycle
         watermark = self.__watermarks[self.__idx]
         self.__idx += 1
         return watermark
@@ -87,22 +94,22 @@ class ImageLoader(BaseLoader):
         # Then we can load them all into memory --> Doesn't take much memory
         for root, _, files in os.walk(imageDir):
             for filename in files:
-                if isinstance(filename, str) and filename.endswith(('.png', '.jpg', '.jpeg')):
+                if isinstance(filename, str) and filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                     self.__imageFiles.append(os.path.join(root, filename))
 
-    # Length of the watermarks
+    # Length of the image files
     def len(self):
         return len(self.__imageFiles)
 
-    # Get the current index
+    # Get the next image file path
     def next(self):
         if self.__idx >= self.len():
-            # Reset the index if we reach the end
+            # Reset the index if we reach the end of the image files list
             self.__idx = 0
-            return None
-        image = self.__imageFiles[self.__idx]
+            return None # Signal end of epoch for images
+        image_path = self.__imageFiles[self.__idx]
         self.__idx += 1
-        return image
+        return image_path
 
 
 # Train and validation data loader
@@ -111,9 +118,9 @@ class DataLoader(BaseLoader):
         super().__init__(batchSize=batchSize)
         self.imageLoader = ImageLoader(imageDir, batchSize=1)
         self.watermarkLoader = WatermarkLoader(watermarkFile, batchSize=1)
-    
+
     def len(self):
-        # total number of samples = number of images
+        # Total number of samples is determined by the number of images
         return self.imageLoader.len()
 
     def next(self):

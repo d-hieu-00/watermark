@@ -7,24 +7,49 @@ class SACAWNLoss(losses.Loss):
         self.impWeight = impWeight
         self.robWeight = robWeight
         self.extWeight = extWeight
-        self.bce = losses.BinaryCrossentropy(from_logits=False)
-        self.cc  = losses.CategoricalCrossentropy(from_logits=True)
+        self.scc = losses.SparseCategoricalCrossentropy(from_logits=False)
 
+    @staticmethod
+    def charErrorRate(y_true, y_pred_probabilities):
+        """
+        Calculates the character error rate.
+        Args:
+            y_true (tf.Tensor): True watermark character IDs, shape (B, L).
+            y_pred_probabilities (tf.Tensor): Predicted watermark probabilities, shape (B, L, S).
+        Returns:
+            tf.Tensor: Scalar character error rate (0 = perfect).
+        """
+        # Convert predicted probabilities to predicted character IDs
+        # This is the same logic as the get_predicted_char_ids function in the Canvas.
+        y_pred_ids = tf.argmax(y_pred_probabilities, axis=-1, output_type=tf.int32)
+
+        # Ensure y_true is also int32 for comparison
+        y_true_ids = tf.cast(y_true, tf.int32)
+
+        # Calculate where true and predicted IDs are not equal
+        errors = tf.cast(tf.not_equal(y_true_ids, y_pred_ids), tf.float32)
+
+        # The mean of errors across all characters and batch items
+        # A value of 0 means perfect extraction.
+        return tf.reduce_mean(errors)
+
+# return tf.argmax(predicted_probabilities, axis=-1, output_type=tf.int32)
     def __call__(self, img_orig, img_watermarked, wm_true, wm_pred):
-        # imperceptibilityrobustness
-        ssim = tf.image.ssim(img_orig, img_watermarked, max_val=1.0)
-        L_imp = 1.0 - tf.reduce_mean(ssim) # Lower is better
+        """
+        img_original:       (B, H, W, 3)
+        img_watermarked:    (B, H, W, 3)
+        wm_true: (B, L)
+        wm_pred: (B, L, S)
+        """
 
-        # robustness (bit-level)
-        # Ensure wm_pred contains probabilities (not logits) and shapes match
-        wm_true_clipped = tf.clip_by_value(wm_true, 0.0, 1.0)
-        wm_pred_prob = tf.clip_by_value(wm_pred, 0.0, 1.0)
-        if len(wm_pred_prob.shape) != len(wm_true_clipped.shape):
-            wm_pred_prob = tf.squeeze(wm_pred_prob)
-        L_rob = self.bce(wm_true_clipped, wm_pred_prob) # Lower is better
+        # imperceptibility
+        L_imp = 1.0 - tf.reduce_mean(tf.image.ssim(img_orig, img_watermarked, max_val=1.0)) # Lower is better
 
-        # extraction accuracy (symbol-level)
-        L_ext = 0 # self.cc(wm_true, wm_pred) # Lower is better
+        # robustness
+        L_rob = self.scc(wm_true, wm_pred)
+
+        # extraction accuracy
+        L_ext = SACAWNLoss.charErrorRate(wm_true, wm_pred)
 
         total_loss = (self.impWeight * L_imp +
                       self.robWeight * L_rob +

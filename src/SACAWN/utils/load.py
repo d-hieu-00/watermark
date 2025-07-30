@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-def loadImageTensor(path: str) -> tf.Tensor: # (H, W, 3)
+def loadImageTensor(path: str, imageSize: tuple = None) -> tf.Tensor: # (H, W, 3)
     """
     Load an image from the given path and convert it to a tf.Tensor.
 
@@ -14,6 +14,9 @@ def loadImageTensor(path: str) -> tf.Tensor: # (H, W, 3)
         img = tf.image.decode_png(imgRaw, channels=3)
     else:
         img = tf.image.decode_jpeg(imgRaw, channels=3)
+    # Resize the image to the specified training size
+    if imageSize is not None:
+        img = tf.image.resize(img, imageSize)
     img = tf.image.convert_image_dtype(img, tf.float32) # [0,1]
     return img
 

@@ -206,3 +206,12 @@ class Configuration:
         if not self._setupLogging:
             return None
         return f"{self.outputPath}/{self.get("training", "logging", "stdErrLogFile")}"
+
+    @property
+    def imageTrainSize(self):
+        """
+        Get the image train size (H, W)
+        """
+        h = self.get("training", "imageHeight", default=256)
+        w = self.get("training", "imageWidth", default=256)
+        return (h, w)
