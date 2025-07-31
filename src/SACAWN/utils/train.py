@@ -5,8 +5,6 @@ import time
 import logging
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2 as Optimizer
 
 from tqdm import tqdm # Progress bar for training loop
 
@@ -115,7 +113,7 @@ class Trainer:
 
         for imgPath, text in batch:
             imgTensors.append(loadImageTensor(imgPath, self.imageTrainSize))  # Convert image to tf.Tensor
-            textTensors.append(loadStringTensor(text, self.wmMaxLen))  # Convert text to tf.Tensor
+            textTensors.append(loadStringTensor(text, self.wmMaxLen, self.wmVocabSize))  # Convert text to tf.Tensor
 
         # Stack into batch tensors
         imgBatch = tf.stack(imgTensors)       # (batch_size, H, W, 3)
@@ -185,6 +183,8 @@ class Trainer:
             losses = [[], [], [], []]
             for step in trainLoop:
                 (imgs, wms), done = self._prepareBatch(self.trainLoader)
+                if done: break  # If we reached the end of the dataset, stop training
+
                 loss, L_imp, L_rob, L_ext = self.trainStep(imgs, wms)
                 trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
                 self.saveTrainLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
@@ -192,7 +192,10 @@ class Trainer:
                 losses[1].append(L_imp.numpy())
                 losses[2].append(L_rob.numpy())
                 losses[3].append(L_ext.numpy())
-                if done: break  # If we reached the end of the dataset, stop training
+
+                if step % 100 == 0 and step != 0:
+                    tqdm.write(f"Saving models for step {step}...")
+                    self.saveModels(printFn=tqdm.write)
 
             tqdm.write(f"Saving models for epoch {epoch}...")
             tqdm.write(f"Training results for epoch {epoch}:")
@@ -205,6 +208,8 @@ class Trainer:
             losses = [[], [], [], []]
             for step in valLoop:
                 (imgs, wms), done = self._prepareBatch(self.valLoader)
+                if done: break # If we reached the end of the dataset, stop validation
+
                 loss, L_imp, L_rob, L_ext = self.valStep(imgs, wms)
                 valLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
                 self.saveValLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
@@ -212,7 +217,6 @@ class Trainer:
                 losses[1].append(L_imp.numpy())
                 losses[2].append(L_rob.numpy())
                 losses[3].append(L_ext.numpy())
-                if done: break # If we reached the end of the dataset, stop validation
 
             tqdm.write(f"Validation results for epoch {epoch}:")
             tqdm.write(f"Total loss: {np.mean(losses[0]):.4f}, L_imp: {np.mean(losses[1]):.4f}, L_rob: {np.mean(losses[2]):.4f}, L_ext: {np.mean(losses[3]):.4f}")

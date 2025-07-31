@@ -12,12 +12,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load and print watermarks
-    config = Configuration(args.configFile)
+    config = Configuration(args.configFile, False)
     logger.info(f"Configuration loaded: {config._configFile}")
     logger.info(f"Training Epochs: {config.trainingEpochs}")
 
-    stdErrLogFile = open(config.stdErrLogFile, 'w')
-    import os; os.dup2(stdErrLogFile.fileno(), 2)  # Redirect stderr to stdErrLogFile for logging
+    # stdErrLogFile = open(config.stdErrLogFile, 'w')
+    # import os; os.dup2(stdErrLogFile.fileno(), 2)  # Redirect stderr to stdErrLogFile for logging
 
     from utils.train import Trainer
     trainer = Trainer(config)

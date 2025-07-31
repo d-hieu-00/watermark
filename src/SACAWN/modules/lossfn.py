@@ -1,6 +1,6 @@
 import logging
 import tensorflow as tf
-from tensorflow.python.keras import losses
+from tensorflow.keras import losses
 
 logger = logging.getLogger(__name__)
 
@@ -10,30 +10,26 @@ class SACAWNLoss(losses.Loss):
         self.impWeight = impWeight
         self.robWeight = robWeight
         self.extWeight = extWeight
-        self.scc = losses.SparseCategoricalCrossentropy(from_logits=False)
+        self.bce = losses.BinaryCrossentropy(from_logits=False)
+        self.cce = losses.CategoricalCrossentropy(from_logits=False)
         logger.info(f"Setup SACAWNLoss with impWeight: {impWeight}, robWeight: {robWeight}, extWeight: {extWeight}")
 
     @staticmethod
-    def extractionAccuracy(y_true, y_pred):
+    def extractionAccuracy(wm_true, wm_pred):
         """
         Calculates the character error rate.
         Args:
-            y_true (tf.Tensor): True watermark character IDs, shape (B, L).
-            y_pred (tf.Tensor): Predicted watermark probabilities, shape (B, L, S).
+            wm_true (tf.Tensor): True watermark character IDs, shape (B, L, S).
+            wm_pred (tf.Tensor): Predicted watermark probabilities, shape (B, L, S).
         Returns:
             tf.Tensor: Scalar character error rate (0 = perfect).
         """
-        # Convert predicted probabilities to predicted character IDs
-        # This is the same logic as the get_predicted_char_ids function in the Canvas.
-        y_pred_ids = tf.argmax(y_pred, axis=-1, output_type=tf.int32)
-
-        # Ensure y_true is also int32 for comparison
-        y_true_ids = tf.cast(y_true, tf.int32)
+        wm_true_int = tf.argmax(wm_true, axis=-1)
+        wm_pred_int = tf.argmax(wm_pred, axis=-1)
 
         # Calculate where true and predicted IDs are not equal
-        errors = tf.cast(tf.not_equal(y_true_ids, y_pred_ids), tf.float32)
+        errors = tf.cast(tf.not_equal(wm_true_int, wm_pred_int), tf.float32)
 
-        # The mean of errors across all characters and batch items
         # A value of 0 means perfect extraction.
         return tf.reduce_mean(errors)
 
@@ -56,7 +52,7 @@ class SACAWNLoss(losses.Loss):
         return SACAWNLoss.imperceptibilityLoss(img_orig, img_watermarked)
 
     def L_rob(self, wm_true, wm_pred):
-        return self.scc(wm_true, wm_pred)
+        return 0.5 * self.bce(wm_true, wm_pred) + 0.5 * self.cce(wm_true, wm_pred)
 
     def L_ext(self, wm_true, wm_pred):
         return SACAWNLoss.extractionAccuracy(wm_true, wm_pred)
@@ -72,22 +68,18 @@ class SACAWNLoss(losses.Loss):
         """
         img_original:       (B, H, W, 3)
         img_watermarked:    (B, H, W, 3)
-        wm_true: (B, L)
+        wm_true: (B, L, S)
         wm_pred: (B, L, S)
         """
         # print(f"Shape: img_orig: {img_orig.shape} img_watermarked: {img_watermarked.shape} wm_true: {wm_true.shape} wm_pred: {wm_pred.shape}")
 
         # imperceptibility
-        L_imp = SACAWNLoss.imperceptibilityLoss(img_orig, img_watermarked)
+        L_imp = self.L_imp(img_orig, img_watermarked)
 
         # robustness
-        L_rob = self.scc(wm_true, wm_pred)
+        L_rob = self.L_rob(wm_true, wm_pred)
 
         # extraction accuracy
-        L_ext = SACAWNLoss.extractionAccuracy(wm_true, wm_pred)
+        L_ext = self.L_ext(wm_true, wm_pred)
 
-        total_loss = (self.impWeight * L_imp +
-                      self.robWeight * L_rob +
-                      self.extWeight * L_ext)
-
-        return total_loss, L_imp, L_rob, L_ext
+        return self.L_total(L_imp, L_rob, L_ext)

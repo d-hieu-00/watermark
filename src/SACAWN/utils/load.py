@@ -20,7 +20,7 @@ def loadImageTensor(path: str, imageSize: tuple = None) -> tf.Tensor: # (H, W, 3
     img = tf.image.convert_image_dtype(img, tf.float32) # [0,1]
     return img
 
-def loadStringTensor(text: str, size: int, padChar: bytes = b'\0') -> tf.Tensor: # (size)
+def loadStringTensor(text: str, maxLen: int, vocabSize: int, padChar: bytes = b'\0') -> tf.Tensor: # (size)
     """
     Convert a string to a tf.Tensor.
 
@@ -33,8 +33,8 @@ def loadStringTensor(text: str, size: int, padChar: bytes = b'\0') -> tf.Tensor:
     # Encode text as bytes
     textBytes = text.encode("utf-8")
     # Truncate if longer, or pad if shorter
-    if len(textBytes) > size:
-        textBytes = textBytes[:size]
+    if len(textBytes) > maxLen:
+        textBytes = textBytes[:maxLen]
     else:
-        textBytes += padChar * (size - len(textBytes))
-    return tf.reshape(tf.constant([b for b in textBytes], dtype=tf.float32), (size,))
+        textBytes += padChar * (maxLen - len(textBytes))
+    return tf.reshape(tf.constant([[1 if i == b else 0 for i in range(vocabSize)] for b in textBytes], dtype=tf.float32), (maxLen,vocabSize))

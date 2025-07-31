@@ -14,7 +14,7 @@ class Configuration:
                 self._configJson = json.load(f)
             self._configFile = configFile
             self._logger.info(f"Configuration loaded from {configFile}")
-            print(f"✅ Configuration loaded from {configFile} - timestamp: {self._timestamp}")
+            print(f"Configuration loaded from {configFile} - timestamp: {self._timestamp}")
         except FileNotFoundError:
             self._logger.error(f"Configuration file {configFile} not found.")
             raise
@@ -24,13 +24,13 @@ class Configuration:
             import os
             if not os.path.exists(self.outputPath):
                 os.makedirs(self.outputPath)
-                print(f"✅ Created output directory: {self.outputPath}")
+                print(f"Created output directory: {self.outputPath}")
 
         # Set logging level based on configuration
         if self._setupLogging:
             logging.basicConfig(filename=self.loggingFile, level=self.loggingLevel.upper(),
                                 format='%(asctime)s - %(levelname)s - %(message)s')
-            print(f"✅ Logging initialized with level: {self.loggingLevel} and file: {self.loggingFile}")
+            print(f"Logging initialized with level: {self.loggingLevel} and file: {self.loggingFile}")
 
         # Set the runtime environment
         envs = self.get("environment", default={})
@@ -38,7 +38,7 @@ class Configuration:
             for key, value in envs.items():
                 import os
                 os.environ[key] = str(value)
-                print(f"✅ Set environment variable {key} to {value}")
+                print(f"Set environment variable {key} to {value}")
 
     def get(self, *keys, default=None):
         """
@@ -69,13 +69,6 @@ class Configuration:
         Get the model path for the extractor model.
         """
         return self.get("model", "extractor", "modelPath")
-
-    @property
-    def modelTileSize(self):
-        """
-        Get the tile size from the configuration.
-        """
-        return self.get("model", "tileSize")
 
     @property
     def trainDatasetImageDir(self):

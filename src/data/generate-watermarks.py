@@ -25,7 +25,7 @@ def saveWatermarks(filename, count=10000):
                 # convert bytes to latin1 string for saving
                 watermark = watermark.decode('latin1')
             f.write(watermark + '\n')
-    print(f"✅ Saved {count} watermarks to {filename}")
+    print(f"Saved {count} watermarks to {filename}")
 
 if __name__ == "__main__":
     filename = sys.argv[1] if len(sys.argv) > 1 else "watermarks.txt"
