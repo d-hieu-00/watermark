@@ -70,7 +70,7 @@ class Trainer:
         # Prepare models and optimizer, loss function
         from modules.model import WatermarkEmbedderModel, WatermarkExtractorModel
         from modules.lossfn import SACAWNLoss
-        from tensorflow.python.keras.optimizer_v2.adam import Adam
+        from keras.optimizers import Adam
 
         # Initialize models and loss function
         self.embedder    = WatermarkEmbedderModel(self.wmMaxLen, self.wmVocabSize).build()

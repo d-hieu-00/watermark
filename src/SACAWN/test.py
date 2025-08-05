@@ -1,13 +1,14 @@
 import tensorflow as tf
-from tensorflow.python import keras
+import keras
 
 from utils.load import loadImageTensor, loadStringTensor
 
 MAX_WM_LEN = 256
+VOCAB_SIZE = 128
 
 def prepareInput(imageFile, watermarkText):
     imgTensor = loadImageTensor(imageFile)
-    wmTensor = loadStringTensor(watermarkText, MAX_WM_LEN)
+    wmTensor = loadStringTensor(watermarkText, MAX_WM_LEN, VOCAB_SIZE)
     return (imgTensor, wmTensor)
 
 def saveImage(tensor, filename):
@@ -33,19 +34,19 @@ def run(imageFile, watermarkText, embedder, extractor):
     return imgWm, extractWm, wmTensor
 
 # Load models
-embedder = keras.models.load_model("./src/SACAWN/_result/20250730-160702/embedder.h5", compile=False)
-extractor = keras.models.load_model("./src/SACAWN/_result/20250730-160702/extractor.h5", compile=False)
+embedder = keras.models.load_model("./src/SACAWN/_result/20250730-191606/embedder.h5", compile=False)
+extractor = keras.models.load_model("./src/SACAWN/_result/20250730-191606/extractor.h5", compile=False)
 
 # Example usage
 (imgWm, extractWm, embeddedWm) = run("./src/SACAWN/test.jpg", "Sample Watermark", embedder, extractor)
 
 # Save watermarked image
 saveImage(imgWm[0], "watermarked_output.png")
-print("✅ Watermarked image saved to watermarked_output.png")
+print("Watermarked image saved to watermarked_output.png")
 
 # Run extractor
 # Convert (256) to string
 # extractWm = tf.squeeze(extractWm, axis=0)  # Remove batch
 
-print("🔷 Extracted watermark :", tf.argmax(extractWm, axis=-1, output_type=tf.int32))
-print("🔷 Embedded watermark :", tf.squeeze(embeddedWm))
+print("Extracted watermark :", tf.argmax(tf.squeeze(extractWm), axis=-1))
+print("Embedded watermark :", tf.argmax(tf.squeeze(embeddedWm), axis=-1))
