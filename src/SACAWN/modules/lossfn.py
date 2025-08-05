@@ -1,6 +1,6 @@
 import logging
 import tensorflow as tf
-from tensorflow.keras import losses
+from keras import losses
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,6 @@ class SACAWNLoss(losses.Loss):
         wm_true: (B, L, S)
         wm_pred: (B, L, S)
         """
-        # print(f"Shape: img_orig: {img_orig.shape} img_watermarked: {img_watermarked.shape} wm_true: {wm_true.shape} wm_pred: {wm_pred.shape}")
 
         # imperceptibility
         L_imp = self.L_imp(img_orig, img_watermarked)
