@@ -34,8 +34,8 @@ def run(imageFile, watermarkText, embedder, extractor):
     return imgWm, extractWm, wmTensor
 
 # Load models
-embedder = keras.models.load_model("./src/SACAWN/_result/20250730-191606/embedder.h5", compile=False)
-extractor = keras.models.load_model("./src/SACAWN/_result/20250730-191606/extractor.h5", compile=False)
+embedder = keras.models.load_model("./src/SACAWN/_result/20250805-153240/embedder", compile=False)
+extractor = keras.models.load_model("./src/SACAWN/_result/20250805-153240/extractor", compile=False)
 
 # Example usage
 (imgWm, extractWm, embeddedWm) = run("./src/SACAWN/test.jpg", "Sample Watermark", embedder, extractor)
