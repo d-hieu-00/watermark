@@ -125,11 +125,11 @@ class Trainer:
         """
         Save the embedder and extractor models to the output directory.
         """
-        self.embedder.save(f"{self.outputDir}/embedder.h5", save_format='h5')
-        self.extractor.save(f"{self.outputDir}/extractor.h5", save_format='h5')
+        self.embedder.save(f"{self.outputDir}/embedder.keras")
+        self.extractor.save(f"{self.outputDir}/extractor.keras")
         if printFn:
-            printFn(f"Embedder model saved to {self.outputDir}/embedder.h5")
-            printFn(f"Extractor model saved to {self.outputDir}/extractor.h5")
+            printFn(f"Embedder model saved to {self.outputDir}/embedder")
+            printFn(f"Extractor model saved to {self.outputDir}/extractor")
 
     def saveTrainLosses(self, epoch, step, losses):
         """
@@ -150,8 +150,21 @@ class Trainer:
             line = f"{int(time.time())},{epoch},{step},{','.join([f'{loss:.4f}' for loss in losses])}\n"
             f.write(line)
 
-    @tf.function(reduce_retracing=True)
-    def trainStep(self, imgs, wms):
+    @tf.function
+    def trainEmbedderStep(self, imgs, wms):
+        with tf.GradientTape() as tape:
+            # Embed
+            embImgs = self.embedder((imgs, wms))
+            # Compute loss
+            totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, None)
+        # Gradient optimize
+        grads = tape.gradient(totalLoss, self.embedder.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.embedder.trainable_variables))
+
+        return totalLoss, L_imp, L_rob, L_ext
+
+    @tf.function
+    def trainExtractorStep(self, imgs, wms):
         with tf.GradientTape() as tape:
             # Embed
             embImgs = self.embedder((imgs, wms))
@@ -159,13 +172,13 @@ class Trainer:
             wmPreds = self.extractor(embImgs)
             # Compute loss
             totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, wmPreds)
-
-        grads = tape.gradient(totalLoss, self.embedder.trainable_variables + self.extractor.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.embedder.trainable_variables + self.extractor.trainable_variables))
+        # Gradient optimize
+        grads = tape.gradient(totalLoss, self.extractor.trainable_variables)
+        self.optimizer.apply_gradients(zip(grads, self.extractor.trainable_variables))
 
         return totalLoss, L_imp, L_rob, L_ext
 
-    @tf.function(reduce_retracing=True)
+    @tf.function
     def valStep(self, imgs, wms):
         # Embed
         watermarkedImgs = self.embedder((imgs, wms))
@@ -178,14 +191,32 @@ class Trainer:
 
     def train(self, epochs=10):
         for epoch in tqdm(range(epochs), file=sys.stdout, desc="Epoch"):
-            # Training step
-            trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train", leave=False)
             losses = [[], [], [], []]
+            # Training embedder
+            trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train Embedder", leave=False)
             for step in trainLoop:
                 (imgs, wms), done = self._prepareBatch(self.trainLoader)
                 if done: break  # If we reached the end of the dataset, stop training
 
-                loss, L_imp, L_rob, L_ext = self.trainStep(imgs, wms)
+                loss, L_imp, L_rob, L_ext = self.trainEmbedderStep(imgs, wms)
+                trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
+                self.saveTrainLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
+                losses[0].append(loss.numpy())
+                losses[1].append(L_imp.numpy())
+                losses[2].append(L_rob.numpy())
+                losses[3].append(L_ext.numpy())
+
+                if step % 100 == 0 and step != 0:
+                    tqdm.write(f"Saving models for step {step}...")
+                    self.saveModels(printFn=tqdm.write)
+
+            # Training extractor
+            trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train Extractor", leave=False)
+            for step in trainLoop:
+                (imgs, wms), done = self._prepareBatch(self.trainLoader)
+                if done: break  # If we reached the end of the dataset, stop training
+
+                loss, L_imp, L_rob, L_ext = self.trainExtractorStep(imgs, wms)
                 trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
                 self.saveTrainLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
                 losses[0].append(loss.numpy())

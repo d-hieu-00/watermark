@@ -76,9 +76,9 @@ class SACAWNLoss(losses.Loss):
         L_imp = self.L_imp(img_orig, img_watermarked)
 
         # robustness
-        L_rob = self.L_rob(wm_true, wm_pred)
+        L_rob = self.L_rob(wm_true, wm_pred)    if wm_pred is not None else 0
 
         # extraction accuracy
-        L_ext = self.L_ext(wm_true, wm_pred)
+        L_ext = self.L_ext(wm_true, wm_pred)    if wm_pred is not None else 0
 
         return self.L_total(L_imp, L_rob, L_ext)
