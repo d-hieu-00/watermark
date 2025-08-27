@@ -70,13 +70,18 @@ class Trainer:
         # Prepare models and optimizer, loss function
         from modules.model import WatermarkEmbedderModel, WatermarkExtractorModel
         from modules.lossfn import SACAWNLoss
-        from keras.optimizers import Adam
+        from keras.api.optimizers import Adam
 
         # Initialize models and loss function
         self.embedder    = WatermarkEmbedderModel(self.wmMaxLen, self.wmVocabSize).build()
         self.extractor   = WatermarkExtractorModel(self.wmMaxLen, self.wmVocabSize).build()
         self.lossFn      = SACAWNLoss(self.config.lossImperceptibilityWeight, self.config.lossRobustnessWeight, self.config.lossExtractionWeight)
-        self.optimizer   = Adam(learning_rate=self.learningRate)
+
+        # Setup Optimizer
+        self.embedderOptimizer  = Adam(learning_rate=self.learningRate)
+        self.extractorOptimizer = Adam(learning_rate=self.learningRate)
+
+        # TODO: hardcode only support adam optimize
         if isinstance(self.optimizerName, str) and self.optimizerName.lower() == "adam":
             pass
         else:
@@ -156,10 +161,12 @@ class Trainer:
             # Embed
             embImgs = self.embedder((imgs, wms))
             # Compute loss
+            # L_ext and L_rob is zero --> no need recaculate the total loss
             totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, None)
+
         # Gradient optimize
         grads = tape.gradient(totalLoss, self.embedder.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.embedder.trainable_variables))
+        self.embedderOptimizer.apply_gradients(zip(grads, self.embedder.trainable_variables))
 
         return totalLoss, L_imp, L_rob, L_ext
 
@@ -172,9 +179,12 @@ class Trainer:
             wmPreds = self.extractor(embImgs)
             # Compute loss
             totalLoss, L_imp, L_rob, L_ext = self.lossFn(imgs, embImgs, wms, wmPreds)
+            # Recaculate the loss
+            totalLoss = L_rob * self.lossFn.robWeight + L_ext * self.lossFn.extWeight
+
         # Gradient optimize
         grads = tape.gradient(totalLoss, self.extractor.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.extractor.trainable_variables))
+        self.extractorOptimizer.apply_gradients(zip(grads, self.extractor.trainable_variables))
 
         return totalLoss, L_imp, L_rob, L_ext
 
@@ -190,16 +200,17 @@ class Trainer:
         return totalLoss, L_imp, L_rob, L_ext
 
     def train(self, epochs=10):
+        trainedEmbedder = False;
         for epoch in tqdm(range(epochs), file=sys.stdout, desc="Epoch"):
             losses = [[], [], [], []]
             # Training embedder
             trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train Embedder", leave=False)
             for step in trainLoop:
                 (imgs, wms), done = self._prepareBatch(self.trainLoader)
-                if done: break  # If we reached the end of the dataset, stop training
+                if done or trainedEmbedder: break  # If we reached the end of the dataset, stop training
 
                 loss, L_imp, L_rob, L_ext = self.trainEmbedderStep(imgs, wms)
-                trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
+                trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy())
                 self.saveTrainLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
                 losses[0].append(loss.numpy())
                 losses[1].append(L_imp.numpy())
@@ -209,6 +220,8 @@ class Trainer:
                 if step % 100 == 0 and step != 0:
                     tqdm.write(f"Saving models for step {step}...")
                     self.saveModels(printFn=tqdm.write)
+                    break
+            trainedEmbedder = True;
 
             # Training extractor
             trainLoop = tqdm(range(self.trainLoader.totalBatches), file=sys.stdout, desc="+ Train Extractor", leave=False)
@@ -217,7 +230,7 @@ class Trainer:
                 if done: break  # If we reached the end of the dataset, stop training
 
                 loss, L_imp, L_rob, L_ext = self.trainExtractorStep(imgs, wms)
-                trainLoop.set_postfix(total_loss=loss.numpy(), L_imp=L_imp.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
+                trainLoop.set_postfix(total_loss=loss.numpy(), L_rob=L_rob.numpy(), L_ext=L_ext.numpy())
                 self.saveTrainLosses(epoch, step, [loss.numpy(), L_imp.numpy(), L_rob.numpy(), L_ext.numpy()])
                 losses[0].append(loss.numpy())
                 losses[1].append(L_imp.numpy())

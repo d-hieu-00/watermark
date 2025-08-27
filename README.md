@@ -13,7 +13,7 @@
 python3 -m venv venv
 source venv/bin/active
 
-pip install-r requirements.txt
+pip install 'tensorflow[and-cuda]' tqdm
 
 # Check CPU devices
 python3 -c "import tensorflow as tf; print(tf.config.list_physical_devices('GPU'))"
